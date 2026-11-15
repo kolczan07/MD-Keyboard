@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.os.SystemClock
 import android.util.SparseArray
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -13,6 +14,7 @@ import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sign
 
 /**
  * Klawiatura rysowana ręcznie. Założenia ergonomiczne:
@@ -142,6 +144,23 @@ class KeyboardView(context: Context) : View(context) {
     private var touchOffset = 0f
     private var haptic = true
 
+    // kalibracja (dp -> px): korekta punktu dotyku osobno dla lewej i prawej strony ekranu
+    private var calLx = 0f
+    private var calLy = 0f
+    private var calRx = 0f
+    private var calRy = 0f
+    private var learn = true
+
+    // tryb testu kalibracji (używany tylko przez CalibrationActivity)
+    var calibrating = false
+    var calibListener: ((String, Float, Float, Float, Float) -> Unit)? = null
+    private var calibKey: Key? = null
+
+    fun setCalibTarget(label: String?) {
+        calibKey = if (label == null) null else letterRows.flatten().firstOrNull { it.code == 0 && it.label == label }
+        invalidate()
+    }
+
     private var rowH = 0f
     private val padTop: Float get() = dp(46f)
     private val altW: Float get() = dp(44f)
@@ -161,6 +180,11 @@ class KeyboardView(context: Context) : View(context) {
         heightScale = p.getInt("height", 100) / 100f
         touchOffset = dp(p.getInt("offset", 0).toFloat())
         haptic = p.getBoolean("haptic", true)
+        learn = p.getBoolean("learn", true)
+        calLx = dp(p.getFloat("cal_lx", 0f).coerceIn(-15f, 15f))
+        calLy = dp(p.getFloat("cal_ly", 0f).coerceIn(-15f, 15f))
+        calRx = dp(p.getFloat("cal_rx", 0f).coerceIn(-15f, 15f))
+        calRy = dp(p.getFloat("cal_ry", 0f).coerceIn(-15f, 15f))
         requestLayout()
         invalidate()
     }
@@ -200,9 +224,12 @@ class KeyboardView(context: Context) : View(context) {
     /** Cała powierzchnia rzędu należy do jakiegoś klawisza, bez martwych stref. */
     private fun findKey(x: Float, y: Float): Key? {
         val rs = rows
-        val ri = ((y + touchOffset - padTop) / rowH).toInt().coerceIn(0, rs.size - 1)
+        val t = (x / width).coerceIn(0f, 1f)
+        val ax = x + calLx + (calRx - calLx) * t
+        val ay = y + touchOffset + calLy + (calRy - calLy) * t
+        val ri = ((ay - padTop) / rowH).toInt().coerceIn(0, rs.size - 1)
         val row = rs[ri]
-        val cx = x.coerceIn(0f, width - 1f)
+        val cx = ax.coerceIn(0f, width - 1f)
         // Skrajne klawisze (q, a, p, l, 1, 0…) są trudniej trafić kciukiem przy krawędzi ekranu,
         // więc ich strefa dotyku wchodzi o ćwierć szerokości w sąsiada.
         val real = row.filter { it.code != SPACER }
@@ -235,6 +262,7 @@ class KeyboardView(context: Context) : View(context) {
         val repeat: Runnable = object : Runnable {
             override fun run() {
                 repeating = true
+                pendingTap = null
                 listener?.onKey(DEL)
                 buzz()
                 postDelayed(this, 45)
@@ -269,11 +297,24 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun onDown(id: Int, x: Float, y: Float) {
+        if (calibrating) {
+            val t = calibKey ?: return
+            buzz()
+            calibListener?.invoke(t.label, x, y, (t.l + t.r) / 2f, (t.t + t.b) / 2f)
+            return
+        }
         val k = findKey(x, y) ?: return
         val p = Ptr(id, k, x, y)
         ptrs.put(id, p)
         buzz()
         if (k.code == DEL) {
+            val pt = prevTap
+            val now = SystemClock.uptimeMillis()
+            if (pt != null && now - pt.time < 1500 && pendingTap == null) {
+                pendingTap = pt
+                pendingTime = now
+            } else pendingTap = null
+            prevTap = null
             listener?.onKey(DEL)
             postDelayed(p.repeat, 400)
         } else if (k.alts.isNotEmpty()) {
@@ -340,12 +381,25 @@ class KeyboardView(context: Context) : View(context) {
         if (k != null && !p.repeating && !p.cursorMode && k.code != DEL) {
             if (p.altIdx >= 0) {
                 listener?.onText(shifted(k.alts[p.altIdx].toString()))
+                clearLearn()
             } else {
                 when (k.code) {
-                    0 -> listener?.onText(shifted(k.label))
-                    SPACE -> listener?.onText(" ")
-                    SYM -> symbols = !symbols
-                    SHIFT, ENTER -> listener?.onKey(k.code)
+                    0 -> {
+                        listener?.onText(shifted(k.label))
+                        noteCharTap(k, p)
+                    }
+                    SPACE -> {
+                        listener?.onText(" ")
+                        clearLearn()
+                    }
+                    SYM -> {
+                        symbols = !symbols
+                        clearLearn()
+                    }
+                    SHIFT, ENTER -> {
+                        listener?.onKey(k.code)
+                        if (k.code == ENTER) clearLearn()
+                    }
                 }
             }
         }
@@ -375,6 +429,58 @@ class KeyboardView(context: Context) : View(context) {
         invalidate()
     }
 
+    // ---------- uczenie się z poprawek ----------
+    // Sygnał: litera A, od razu backspace, potem sąsiedni klawisz B => dotyk w A miał trafić w B.
+    // Co poprawkę przesuwamy korektę o małą stałą w stronę B (znak kierunku), więc losowe pomyłki
+    // w różne strony się znoszą, a systematyczne przesunięcie narasta aż do zrównoważenia.
+
+    private class Tap(val key: Key, val rx: Float, val ry: Float, val time: Long)
+
+    private var prevTap: Tap? = null
+    private var pendingTap: Tap? = null
+    private var pendingTime = 0L
+
+    private fun clearLearn() {
+        prevTap = null
+        pendingTap = null
+    }
+
+    private fun noteCharTap(k: Key, p: Ptr) {
+        val now = SystemClock.uptimeMillis()
+        val pt = pendingTap
+        val direct = p.key === p.downKey
+        if (learn && direct && pt != null && now - pendingTime < 2500) learnFrom(pt, k)
+        pendingTap = null
+        prevTap = if (direct) Tap(k, p.downX, p.downY, now) else null
+    }
+
+    private fun learnFrom(tap: Tap, b: Key) {
+        val a = tap.key
+        if (a === b || a.code != 0 || b.code != 0) return
+        val acx = (a.l + a.r) / 2f
+        val acy = (a.t + a.b) / 2f
+        val bcx = (b.l + b.r) / 2f
+        val bcy = (b.t + b.b) / 2f
+        val unit = width / 10f
+        if (abs(acx - bcx) > 1.6f * unit || abs(acy - bcy) > 1.3f * rowH) return
+        val sx = if (abs(bcx - acx) < 2f) 0f else sign(bcx - acx)
+        val sy = if (abs(bcy - acy) < 2f) 0f else sign(bcy - acy)
+        val step = dp(0.3f)
+        val lim = dp(12f)
+        if (tap.rx < width / 2f) {
+            calLx = (calLx + sx * step).coerceIn(-lim, lim)
+            calLy = (calLy + sy * step).coerceIn(-lim, lim)
+        } else {
+            calRx = (calRx + sx * step).coerceIn(-lim, lim)
+            calRy = (calRy + sy * step).coerceIn(-lim, lim)
+        }
+        val d = resources.displayMetrics.density
+        context.getSharedPreferences("ergo", Context.MODE_PRIVATE).edit()
+            .putFloat("cal_lx", calLx / d).putFloat("cal_ly", calLy / d)
+            .putFloat("cal_rx", calRx / d).putFloat("cal_ry", calRy / d)
+            .apply()
+    }
+
     private fun shifted(s: String) = if (shiftState != OFF) s.uppercase() else s
 
     // popup z alternatywami: pierwszy znak zawsze pod palcem, reszta w stronę wolnego miejsca
@@ -401,7 +507,7 @@ class KeyboardView(context: Context) : View(context) {
             rect.set(k.l + gx, k.t + gy, k.r - gx, k.b - gy)
             paint.style = Paint.Style.FILL
             paint.color = when {
-                k in down -> ACCENT
+                k in down || k === calibKey -> ACCENT
                 k.code == ENTER -> ENTER_BG
                 k.code == SHIFT && shiftState != OFF -> KEY_ON
                 k.code < 0 && k.code != SPACE -> KEY_SPECIAL

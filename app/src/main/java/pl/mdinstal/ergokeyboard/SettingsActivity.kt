@@ -18,6 +18,7 @@ import android.widget.TextView
 class SettingsActivity : Activity() {
 
     private lateinit var prefs: SharedPreferences
+    private lateinit var calInfo: TextView
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -53,6 +54,22 @@ class SettingsActivity : Activity() {
         root.addView(label("Tylko dodaje ogonki w znanych słowach po spacji lub interpunkcji, nic poza tym. " +
                 "Backspace zaraz po podmianie przywraca to, co wpisałeś."))
 
+        root.addView(label("Kalibracja dotyku", 20f))
+        root.addView(Button(this).apply {
+            text = "Test kalibracji dotyku"
+            setOnClickListener { startActivity(Intent(this@SettingsActivity, CalibrationActivity::class.java)) }
+        })
+        addSwitch(root, "Uczenie się z poprawek (litera, backspace, sąsiedni klawisz)", "learn", true)
+        calInfo = label("")
+        root.addView(calInfo)
+        root.addView(Button(this).apply {
+            text = "Resetuj kalibrację"
+            setOnClickListener {
+                prefs.edit().remove("cal_lx").remove("cal_ly").remove("cal_rx").remove("cal_ry").apply()
+                refreshCal()
+            }
+        })
+
         root.addView(label("Aktualizacje", 20f))
         val ver = label("Wersja ${versionName()}")
         root.addView(ver)
@@ -71,6 +88,17 @@ class SettingsActivity : Activity() {
         root.addView(EditText(this).apply { hint = "Pisz tutaj" })
 
         setContentView(ScrollView(this).apply { addView(root) })
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshCal()
+    }
+
+    private fun refreshCal() {
+        fun f(k: String) = prefs.getFloat(k, 0f)
+        calInfo.text = "Korekta dotyku (dp), lewa strona: poziomo %+.1f, pionowo %+.1f; prawa: poziomo %+.1f, pionowo %+.1f"
+            .format(f("cal_lx"), f("cal_ly"), f("cal_rx"), f("cal_ry"))
     }
 
     private fun label(s: String, size: Float = 16f) = TextView(this).apply {
