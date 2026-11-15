@@ -43,6 +43,7 @@ class KeyboardView(context: Context) : View(context) {
         const val CAPS = 2
 
         private const val EDGE_EXT = 0.25f
+        private const val SPACE_EXT = 0.2f
 
         private val BG = 0xFF16171B.toInt()
         private val KEY = 0xFF2B2D34.toInt()
@@ -209,6 +210,11 @@ class KeyboardView(context: Context) : View(context) {
         val last = real.last()
         if (last.code == 0 && cx >= last.l - EDGE_EXT * (last.r - last.l)) return last
         if (first.code == 0 && cx < first.r + EDGE_EXT * (first.r - first.l)) return first
+        // Spacja to najczęstszy klawisz: jej strefa wchodzi o 0,2 szerokości zwykłego klawisza w , i .
+        row.firstOrNull { it.code == SPACE }?.let { sp ->
+            val ext = SPACE_EXT * (sp.r - sp.l) / sp.weight
+            if (cx >= sp.l - ext && cx < sp.r + ext) return sp
+        }
         var best = row.firstOrNull { cx >= it.l && cx < it.r } ?: row.last()
         if (best.code == SPACER) {
             best = if (cx < width / 2f) row.first { it.code != SPACER } else row.last { it.code != SPACER }
