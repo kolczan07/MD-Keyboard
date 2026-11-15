@@ -42,6 +42,8 @@ class KeyboardView(context: Context) : View(context) {
         const val ONCE = 1
         const val CAPS = 2
 
+        private const val EDGE_EXT = 0.25f
+
         private val BG = 0xFF16171B.toInt()
         private val KEY = 0xFF2B2D34.toInt()
         private val KEY_SPECIAL = 0xFF202228.toInt()
@@ -194,6 +196,13 @@ class KeyboardView(context: Context) : View(context) {
         val ri = ((y + touchOffset - padTop) / rowH).toInt().coerceIn(0, rs.size - 1)
         val row = rs[ri]
         val cx = x.coerceIn(0f, width - 1f)
+        // Skrajne klawisze (q, a, p, l, 1, 0…) są trudniej trafić kciukiem przy krawędzi ekranu,
+        // więc ich strefa dotyku wchodzi o ćwierć szerokości w sąsiada.
+        val real = row.filter { it.code != SPACER }
+        val first = real.first()
+        val last = real.last()
+        if (last.code == 0 && cx >= last.l - EDGE_EXT * (last.r - last.l)) return last
+        if (first.code == 0 && cx < first.r + EDGE_EXT * (first.r - first.l)) return first
         var best = row.firstOrNull { cx >= it.l && cx < it.r } ?: row.last()
         if (best.code == SPACER) {
             best = if (cx < width / 2f) row.first { it.code != SPACER } else row.last { it.code != SPACER }
