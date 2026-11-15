@@ -76,9 +76,15 @@ class KeyboardView(context: Context) : View(context) {
         'a' to "ą", 'c' to "ć", 'e' to "ę€", 'l' to "ł", 'n' to "ń",
         'o' to "ó", 's' to "ś", 'z' to "żź"
     )
+    // rząd cyfr: przytrzymanie daje indeks górny (¹²³…), przesunięcie palca w bok daje znak specjalny
     private val digitAlts = mapOf(
-        '1' to "!", '2' to "@", '3' to "#", '4' to "$", '5' to "%",
-        '6' to "^", '7' to "&", '8' to "*", '9' to "(", '0' to ")"
+        '1' to "¹!", '2' to "²@", '3' to "³#", '4' to "⁴$", '5' to "⁵%",
+        '6' to "⁶^", '7' to "⁷&", '8' to "⁸*", '9' to "⁹(", '0' to "⁰)"
+    )
+    // rząd cyfr na stronie symboli: sam indeks górny
+    private val supAlts = mapOf(
+        '1' to "¹", '2' to "²", '3' to "³", '4' to "⁴", '5' to "⁵",
+        '6' to "⁶", '7' to "⁷", '8' to "⁸", '9' to "⁹", '0' to "⁰"
     )
     private val symAlts = mapOf(
         '$' to "€£", '-' to "_~", '"' to "„”«»", '\'' to "’", '*' to "•", '/' to "\\"
@@ -99,7 +105,7 @@ class KeyboardView(context: Context) : View(context) {
     )
 
     private val symbolRows: List<List<Key>> = listOf(
-        chars("1234567890"),
+        chars("1234567890", supAlts),
         chars("@#\$%&-+()/", symAlts),
         listOf(Key("", SPACER, 0.5f)) + chars("*\"':;!?=_", symAlts) + Key("", SPACER, 0.5f),
         chars("\\|<>[]{}") + Key("", DEL, 2f),
