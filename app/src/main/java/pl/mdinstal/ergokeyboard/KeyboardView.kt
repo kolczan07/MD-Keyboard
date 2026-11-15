@@ -38,6 +38,7 @@ class KeyboardView(context: Context) : View(context) {
         const val SYM = -3
         const val ENTER = -4
         const val SPACE = -5
+        const val SYM2 = -6
         const val SPACER = -9
 
         const val OFF = 0
@@ -90,7 +91,8 @@ class KeyboardView(context: Context) : View(context) {
         '6' to "⁶", '7' to "⁷", '8' to "⁸", '9' to "⁹", '0' to "⁰"
     )
     private val symAlts = mapOf(
-        '$' to "€£", '-' to "_~", '"' to "„”«»", '\'' to "’", '*' to "•", '/' to "\\"
+        '$' to "€£¢¥", '-' to "_–—", '+' to "±", '(' to "[{<", ')' to "]}>", '/' to "\\",
+        '*' to "†‡★", '"' to "„”«»“", '\'' to "’‘‚", '!' to "¡", '?' to "¿", '&' to "§", '#' to "№"
     )
 
     private val letterRows: List<List<Key>> = listOf(
@@ -107,16 +109,30 @@ class KeyboardView(context: Context) : View(context) {
         )
     )
 
+    // strona symboli 1 (jak w Gboard): cyfry (przytrzymanie = indeks górny), @#$_&-+()/, =\< * " ' : ; ! ?
     private val symbolRows: List<List<Key>> = listOf(
         chars("1234567890", supAlts),
-        chars("@#\$%&-+()/", symAlts),
-        listOf(Key("", SPACER, 0.5f)) + chars("*\"':;!?=_", symAlts) + Key("", SPACER, 0.5f),
-        chars("\\|<>[]{}") + Key("", DEL, 2f),
+        chars("@#\$_&-+()/", symAlts),
+        listOf(Key("=\\<", SYM2, 1.5f)) + chars("*\"':;!?", symAlts) + Key("", DEL, 1.5f),
         listOf(
             Key("ABC", SYM, 1.5f),
             Key(","),
             Key(" ", SPACE, 5f),
             Key("."),
+            Key("", ENTER, 1.5f)
+        )
+    )
+
+    // strona symboli 2: ~ ` | • √ π ÷ × ¶ ∆ / £ ¢ € ¥ ^ ° = { } \ / % © ® ™ ✓ [ ]
+    private val symbolRows2: List<List<Key>> = listOf(
+        chars("~`|•√π÷×¶∆"),
+        chars("£¢€¥^°={}\\"),
+        listOf(Key("?123", SYM2, 1.5f)) + chars("%©®™✓[]") + Key("", DEL, 1.5f),
+        listOf(
+            Key("ABC", SYM, 1.5f),
+            Key("<"),
+            Key(" ", SPACE, 5f),
+            Key(">"),
             Key("", ENTER, 1.5f)
         )
     )
@@ -131,14 +147,17 @@ class KeyboardView(context: Context) : View(context) {
             invalidate()
         }
 
+    private var page2 = false
+
     var symbols = false
         set(value) {
             field = value
+            page2 = false
             layoutKeys()
             invalidate()
         }
 
-    private val rows: List<List<Key>> get() = if (symbols) symbolRows else letterRows
+    private val rows: List<List<Key>> get() = if (!symbols) letterRows else if (page2) symbolRows2 else symbolRows
 
     private var heightScale = 1f
     private var touchOffset = 0f
@@ -162,6 +181,7 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private var rowH = 0f
+    private var baseRowH = 0f
     private val padTop: Float get() = dp(46f)
     private val altW: Float get() = dp(44f)
 
@@ -196,7 +216,7 @@ class KeyboardView(context: Context) : View(context) {
         var rh = dp(50f) * heightScale
         val maxH = resources.displayMetrics.heightPixels * 0.55f
         if (padTop + rh * 5 > maxH) rh = (maxH - padTop) / 5
-        rowH = rh
+        baseRowH = rh
         setMeasuredDimension(w, (padTop + rh * 5).toInt())
     }
 
@@ -205,7 +225,8 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun layoutKeys() {
-        if (width == 0) return
+        if (width == 0 || height == 0) return
+        rowH = (height - padTop) / rows.size
         rows.forEachIndexed { ri, row ->
             val total = row.sumOf { it.weight.toDouble() }.toFloat()
             val unit = width / total
@@ -396,6 +417,11 @@ class KeyboardView(context: Context) : View(context) {
                         symbols = !symbols
                         clearLearn()
                     }
+                    SYM2 -> {
+                        page2 = !page2
+                        layoutKeys()
+                        clearLearn()
+                    }
                     SHIFT, ENTER -> {
                         listener?.onKey(k.code)
                         if (k.code == ENTER) clearLearn()
@@ -527,7 +553,7 @@ class KeyboardView(context: Context) : View(context) {
                         )
                     }
                 }
-                SYM -> drawCentered(c, k.label, cx, cy, rowH * 0.3f, TEXT)
+                SYM, SYM2 -> drawCentered(c, k.label, cx, cy, rowH * 0.3f, TEXT)
                 SHIFT -> iconShift(c, cx, cy, s)
                 DEL -> iconDel(c, cx, cy, s)
                 ENTER -> iconEnter(c, cx, cy, s)
