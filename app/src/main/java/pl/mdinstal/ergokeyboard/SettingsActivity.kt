@@ -49,6 +49,9 @@ class SettingsActivity : Activity() {
         addSeek(root, "Korekta dotyku (− wyżej, + niżej)", "offset", -10, 10, 0) { "$it dp" }
         addSwitch(root, "Wibracja przy dotyku", "haptic", true)
         addSwitch(root, "Wielka litera na początku zdania", "autocap", true)
+        addSwitch(root, "Dopisuj polskie znaki (sie → się, wiecej → więcej)", "fixpl", true)
+        root.addView(label("Tylko dodaje ogonki w znanych słowach po spacji lub interpunkcji, nic poza tym. " +
+                "Backspace zaraz po podmianie przywraca to, co wpisałeś."))
 
         root.addView(label("Aktualizacje", 20f))
         val ver = label("Wersja ${versionName()}")
