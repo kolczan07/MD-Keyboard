@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
@@ -18,7 +19,7 @@ import kotlin.math.sqrt
  */
 class CalibrationActivity : Activity() {
 
-    private class Sample(val rx: Float, val ry: Float, val cx: Float, val cy: Float)
+    private class Sample(val label: String, val rx: Float, val ry: Float, val cx: Float, val cy: Float)
 
     private lateinit var kv: KeyboardView
     private lateinit var progress: TextView
@@ -69,7 +70,9 @@ class CalibrationActivity : Activity() {
             setOnClickListener { start() }
         })
         top.addView(buttons)
-        root.addView(top, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        val scroll = ScrollView(this)
+        scroll.addView(top)
+        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         kv = KeyboardView(this)
         root.addView(
@@ -79,7 +82,7 @@ class CalibrationActivity : Activity() {
         setContentView(root)
 
         kv.calibrating = true
-        kv.calibListener = { _, rx, ry, cx, cy -> onSample(rx, ry, cx, cy) }
+        kv.calibListener = { label, rx, ry, cx, cy -> onSample(label, rx, ry, cx, cy) }
         start()
     }
 
@@ -96,9 +99,9 @@ class CalibrationActivity : Activity() {
         progress.text = "Stuknięcie 1 / ${targets.size}"
     }
 
-    private fun onSample(rx: Float, ry: Float, cx: Float, cy: Float) {
+    private fun onSample(label: String, rx: Float, ry: Float, cx: Float, cy: Float) {
         if (samples.size >= targets.size) return
-        samples.add(Sample(rx, ry, cx, cy))
+        samples.add(Sample(label, rx, ry, cx, cy))
         val n = samples.size
         if (n < targets.size) {
             kv.setCalibTarget(targets[n])
@@ -140,8 +143,42 @@ class CalibrationActivity : Activity() {
         right = side(samples.filter { it.cx >= half })
         progress.text = "Gotowe"
         result.text = describe("Lewa strona", left) + "\n\n" + describe("Prawa strona", right) +
+                breakdown() +
                 "\n\nZapisz, żeby klawiatura od razu używała tej korekty. Dalej będzie ją sama dostrajać z Twoich poprawek."
         buttons.visibility = View.VISIBLE
+    }
+
+    /** Rozkład trafień: czy przesunięcie jest równe na całej klawiaturze, czy tylko w jednym rejonie. */
+    private fun breakdown(): String {
+        val d = resources.displayMetrics.density
+        val unit = kv.width / 10f
+        val sb = StringBuilder()
+        sb.append("\n\nGdzie ląduje palec względem środka klawisza (dp; poziomo + = w prawo, pionowo + = niżej).\n")
+        sb.append("Kolumny od lewej:\n")
+        for (c in 0 until 10) {
+            val l = samples.filter { (it.cx / unit + 0.01f).toInt() == c }
+            if (l.isEmpty()) continue
+            val h = median(l.map { it.rx - it.cx }) / d
+            val v = median(l.map { it.ry - it.cy }) / d
+            sb.append("${c + 1}: poziomo %+.1f, pionowo %+.1f (n=${l.size})\n".format(h, v))
+        }
+        sb.append("Rzędy:\n")
+        val rowDefs = listOf("qwertyuiop" to "górny", "asdfghjkl" to "środkowy", "zxcvbnm" to "dolny")
+        for ((letters, name) in rowDefs) {
+            val l = samples.filter { letters.contains(it.label) }
+            if (l.isEmpty()) continue
+            val h = median(l.map { it.rx - it.cx }) / d
+            val v = median(l.map { it.ry - it.cy }) / d
+            sb.append("$name: poziomo %+.1f, pionowo %+.1f (n=${l.size})\n".format(h, v))
+        }
+        for (ch in listOf("k", "l")) {
+            val l = samples.filter { it.label == ch }
+            if (l.isEmpty()) continue
+            val h = median(l.map { it.rx - it.cx }) / d
+            val v = median(l.map { it.ry - it.cy }) / d
+            sb.append("Litera $ch: poziomo %+.1f, pionowo %+.1f (n=${l.size})\n".format(h, v))
+        }
+        return sb.toString()
     }
 
     private fun save() {
