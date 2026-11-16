@@ -256,8 +256,11 @@ class KeyboardView(context: Context) : View(context) {
         val real = row.filter { it.code != SPACER }
         val first = real.first()
         val last = real.last()
-        if (last.code == 0 && cx >= last.l - EDGE_EXT * (last.r - last.l)) return last
-        if (first.code == 0 && cx < first.r + EDGE_EXT * (first.r - first.l)) return first
+        // Rząd z odstępami po bokach (asdfghjkl): a i l już mają dodatkową strefę przy krawędzi,
+        // więc tu nie poszerzamy, bo kosztem k i s.
+        val hasSideGap = row.any { it.code == SPACER }
+        if (!hasSideGap && last.code == 0 && cx >= last.l - EDGE_EXT * (last.r - last.l)) return last
+        if (!hasSideGap && first.code == 0 && cx < first.r + EDGE_EXT * (first.r - first.l)) return first
         // Spacja to najczęstszy klawisz: jej strefa wchodzi o 0,2 szerokości zwykłego klawisza w , i .
         row.firstOrNull { it.code == SPACE }?.let { sp ->
             val ext = SPACE_EXT * (sp.r - sp.l) / sp.weight
