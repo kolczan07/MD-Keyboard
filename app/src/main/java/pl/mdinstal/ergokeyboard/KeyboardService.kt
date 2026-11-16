@@ -1,5 +1,6 @@
 package pl.mdinstal.ergokeyboard
 
+import android.content.ClipboardManager
 import android.inputmethodservice.InputMethodService
 import android.os.SystemClock
 import android.text.InputType
@@ -24,15 +25,64 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     private var lastFix: Fix? = null
 
+    // Historia schowka: tylko w pamięci, nic nie jest zapisywane na dysku ani wysyłane.
+    private val clips = ArrayList<String>()
+    private var clipboard: ClipboardManager? = null
+    private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { readClipboard() }
+
     override fun onCreate() {
         super.onCreate()
         PlCorrector.load(this)
+        clipboard = getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager
+        try {
+            clipboard?.addPrimaryClipChangedListener(clipListener)
+        } catch (_: Exception) {
+        }
+    }
+
+    override fun onDestroy() {
+        try {
+            clipboard?.removePrimaryClipChangedListener(clipListener)
+        } catch (_: Exception) {
+        }
+        super.onDestroy()
     }
 
     override fun onCreateInputView(): View {
         kv = KeyboardView(this)
         kv.listener = this
+        kv.onClipPaste = { text ->
+            lastFix = null
+            currentInputConnection?.commitText(text, 1)
+            refreshShift()
+        }
+        kv.onClipDelete = { text ->
+            clips.remove(text)
+            kv.setClip(clips.toList())
+        }
+        kv.onClipClear = {
+            clips.clear()
+            kv.setClip(emptyList())
+        }
+        kv.setClip(clips.toList())
         return kv
+    }
+
+    private fun readClipboard() {
+        try {
+            val clip = clipboard?.primaryClip ?: return
+            if (clip.itemCount == 0) return
+            // Pomijamy wpisy oznaczone jako wrażliwe (np. hasła z menedżera haseł).
+            if (clip.description?.extras?.getBoolean("android.content.extra.IS_SENSITIVE") == true) return
+            val text = clip.getItemAt(0).coerceToText(this)?.toString() ?: return
+            if (text.isBlank() || text.length > 5000) return
+            clips.remove(text)
+            clips.add(0, text)
+            while (clips.size > 20) clips.removeAt(clips.size - 1)
+            if (::kv.isInitialized) kv.setClip(clips.toList())
+        } catch (_: Exception) {
+            // brak dostępu do schowka w tym momencie (system może go ograniczać) - pomijamy
+        }
     }
 
     override fun onEvaluateFullscreenMode() = false
@@ -41,6 +91,8 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         super.onStartInputView(info, restarting)
         if (!::kv.isInitialized) return
         kv.reloadPrefs()
+        kv.closeClip()
+        if (!isPasswordField(info)) readClipboard()
         val prefs = getSharedPreferences("ergo", MODE_PRIVATE)
         autoCap = prefs.getBoolean("autocap", true)
         fixPl = prefs.getBoolean("fixpl", true) && fieldAllowsFix(info)
@@ -120,6 +172,20 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         val ei = currentInputEditorInfo ?: return
         val caps = autoCap && ic.getCursorCapsMode(ei.inputType) != 0
         kv.shiftState = if (caps) KeyboardView.ONCE else KeyboardView.OFF
+    }
+
+    private fun isPasswordField(info: EditorInfo): Boolean {
+        val t = info.inputType
+        val cls = t and InputType.TYPE_MASK_CLASS
+        val v = t and InputType.TYPE_MASK_VARIATION
+        return when (cls) {
+            InputType.TYPE_CLASS_TEXT ->
+                v == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+                    v == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+                    v == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
+            InputType.TYPE_CLASS_NUMBER -> v == InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            else -> false
+        }
     }
 
     private fun fieldAllowsFix(info: EditorInfo): Boolean {

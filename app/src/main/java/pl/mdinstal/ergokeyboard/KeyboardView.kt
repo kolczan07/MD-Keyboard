@@ -182,6 +182,148 @@ class KeyboardView(context: Context) : View(context) {
 
     private var rowH = 0f
     private var baseRowH = 0f
+
+    // ---------- schowek (panel otwierany długim przytrzymaniem ?123 / ABC) ----------
+    var clipMode = false
+    private var clipItems: List<String> = emptyList()
+    private var clipPage = 0
+    var onClipPaste: ((String) -> Unit)? = null
+    var onClipDelete: ((String) -> Unit)? = null
+    var onClipClear: (() -> Unit)? = null
+    private var clipId = -1
+    private var clipDx = 0f
+    private var clipDy = 0f
+    private var clipMoved = false
+    private var clipLongDone = false
+    private val clipLong = Runnable {
+        val idx = clipItemAt(clipDx, clipDy)
+        if (idx != null && !clipMoved) {
+            clipLongDone = true
+            if (haptic) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            onClipDelete?.invoke(clipItems[idx])
+        }
+    }
+
+    fun setClip(items: List<String>) {
+        clipItems = items
+        clipPage = clipPage.coerceAtMost(max(0, (items.size - 1) / 4))
+        invalidate()
+    }
+
+    fun closeClip() {
+        removeCallbacks(clipLong)
+        clipId = -1
+        clipMode = false
+        clipPage = 0
+        invalidate()
+    }
+
+    private fun clipRowH() = (height - padTop) / 5f
+
+    private fun clipItemAt(x: Float, y: Float): Int? {
+        if (y < padTop) return null
+        val row = ((y - padTop) / clipRowH()).toInt()
+        if (row !in 0..3) return null
+        val idx = clipPage * 4 + row
+        return if (idx < clipItems.size) idx else null
+    }
+
+    private fun clipTouch(e: MotionEvent) {
+        val i = e.actionIndex
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> if (clipId == -1) {
+                clipId = e.getPointerId(i)
+                clipDx = e.getX(i)
+                clipDy = e.getY(i)
+                clipMoved = false
+                clipLongDone = false
+                if (clipItemAt(clipDx, clipDy) != null) postDelayed(clipLong, 500)
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val idx = e.findPointerIndex(clipId)
+                if (idx >= 0 && hypot(e.getX(idx) - clipDx, e.getY(idx) - clipDy) > dp(12f)) {
+                    clipMoved = true
+                    removeCallbacks(clipLong)
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> if (e.getPointerId(i) == clipId) {
+                removeCallbacks(clipLong)
+                clipId = -1
+                if (!clipMoved && !clipLongDone) clipTap(e.getX(i), e.getY(i))
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                removeCallbacks(clipLong)
+                clipId = -1
+            }
+        }
+    }
+
+    private fun clipTap(x: Float, y: Float) {
+        if (y < padTop) return
+        val row = ((y - padTop) / clipRowH()).toInt().coerceIn(0, 4)
+        buzz()
+        if (row < 4) {
+            val idx = clipItemAt(x, y) ?: return
+            val text = clipItems[idx]
+            closeClip()
+            onClipPaste?.invoke(text)
+        } else {
+            val f = x / width
+            val maxPage = max(0, (clipItems.size - 1) / 4)
+            when {
+                f < 0.3f -> closeClip()
+                f < 0.5f -> clipPage = max(0, clipPage - 1)
+                f < 0.7f -> clipPage = min(maxPage, clipPage + 1)
+                else -> {
+                    onClipClear?.invoke()
+                    closeClip()
+                }
+            }
+            invalidate()
+        }
+    }
+
+    private fun drawClip(c: Canvas) {
+        val gx = dp(2.5f)
+        val gy = dp(3.5f)
+        val rh = clipRowH()
+        paint.style = Paint.Style.FILL
+        for (r in 0 until 4) {
+            rect.set(gx, padTop + r * rh + gy, width - gx, padTop + (r + 1) * rh - gy)
+            paint.color = KEY
+            c.drawRoundRect(rect, dp(7f), dp(7f), paint)
+            val idx = clipPage * 4 + r
+            if (idx < clipItems.size) {
+                drawLeft(c, clipItems[idx], dp(14f), rect.centerY(), rh * 0.3f, TEXT, width - dp(28f))
+            } else if (clipItems.isEmpty() && r == 0) {
+                drawLeft(c, "Schowek jest pusty. Skopiuj tekst.", dp(14f), rect.centerY(), rh * 0.28f, HINT, width - dp(28f))
+            }
+        }
+        val labels = arrayOf("ABC", "‹", "›", "Wyczyść")
+        val edges = floatArrayOf(0f, 0.3f, 0.5f, 0.7f, 1f)
+        for (b in 0 until 4) {
+            rect.set(edges[b] * width + gx, padTop + 4 * rh + gy, edges[b + 1] * width - gx, padTop + 5 * rh - gy)
+            paint.color = KEY_SPECIAL
+            c.drawRoundRect(rect, dp(7f), dp(7f), paint)
+            drawCentered(c, labels[b], rect.centerX(), rect.centerY(), rh * 0.3f, TEXT)
+        }
+        paint.color = HINT
+        val pages = max(1, (clipItems.size + 3) / 4)
+        drawCentered(c, "${clipPage + 1}/$pages", width * 0.6f, padTop - dp(14f), dp(12f), HINT)
+    }
+
+    private fun drawLeft(c: Canvas, text: String, x: Float, cy: Float, size: Float, color: Int, maxW: Float) {
+        val s = text.replace(Regex("\\s+"), " ").trim()
+        paint.style = Paint.Style.FILL
+        paint.textSize = size
+        paint.color = color
+        paint.textAlign = Paint.Align.LEFT
+        val n = paint.breakText(s, true, maxW, null)
+        val out = if (n < s.length) s.substring(0, max(0, n - 1)) + "…" else s
+        val fm = paint.fontMetrics
+        c.drawText(out, x, cy - (fm.ascent + fm.descent) / 2f, paint)
+        paint.textAlign = Paint.Align.CENTER
+    }
     private val padTop: Float get() = dp(46f)
     private val altW: Float get() = dp(44f)
 
@@ -281,6 +423,7 @@ class KeyboardView(context: Context) : View(context) {
         var cursorMode = false
         var lastStepX = downX
         var repeating = false
+        var consumed = false
 
         val longPress = Runnable { startAlts(this) }
         val repeat: Runnable = object : Runnable {
@@ -301,6 +444,10 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (clipMode) {
+            clipTouch(e)
+            return true
+        }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val i = e.actionIndex
@@ -343,6 +490,8 @@ class KeyboardView(context: Context) : View(context) {
             postDelayed(p.repeat, 400)
         } else if (k.alts.isNotEmpty()) {
             postDelayed(p.longPress, 350)
+        } else if (k.code == SYM) {
+            postDelayed(p.longPress, 450)
         }
         invalidate()
     }
@@ -351,7 +500,7 @@ class KeyboardView(context: Context) : View(context) {
         val p = ptrs.get(id) ?: return
         val k = p.key ?: return
         when {
-            k.code == DEL || p.repeating -> Unit
+            k.code == DEL || p.repeating || p.consumed -> Unit
 
             p.altIdx >= 0 -> {
                 val n = k.alts.length
@@ -402,7 +551,7 @@ class KeyboardView(context: Context) : View(context) {
         removeCallbacks(p.longPress)
         removeCallbacks(p.repeat)
         val k = p.key
-        if (k != null && !p.repeating && !p.cursorMode && k.code != DEL) {
+        if (k != null && !p.repeating && !p.cursorMode && !p.consumed && k.code != DEL) {
             if (p.altIdx >= 0) {
                 listener?.onText(shifted(k.alts[p.altIdx].toString()))
                 clearLearn()
@@ -452,6 +601,16 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun startAlts(p: Ptr) {
         val k = p.key ?: return
+        if (k.code == SYM) {
+            p.consumed = true
+            if (haptic) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            cancelAll()
+            clipPage = 0
+            clipMode = true
+            clearLearn()
+            invalidate()
+            return
+        }
         if (k.alts.isEmpty()) return
         p.altIdx = 0
         if (haptic) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
@@ -526,6 +685,10 @@ class KeyboardView(context: Context) : View(context) {
 
     override fun onDraw(c: Canvas) {
         c.drawColor(BG)
+        if (clipMode) {
+            drawClip(c)
+            return
+        }
         val gx = dp(2.5f)
         val gy = dp(3.5f)
         val down = HashSet<Key>()
