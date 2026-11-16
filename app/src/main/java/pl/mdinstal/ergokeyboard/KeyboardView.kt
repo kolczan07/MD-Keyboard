@@ -549,12 +549,6 @@ class KeyboardView(context: Context) : View(context) {
             when (k.code) {
                 0 -> {
                     drawCentered(c, shifted(k.label), cx, cy, rowH * 0.46f, TEXT)
-                    if (k.alts.isNotEmpty()) {
-                        drawCentered(
-                            c, shifted(k.alts.substring(0, 1)),
-                            rect.right - dp(8f), rect.top + dp(11f), rowH * 0.24f, HINT
-                        )
-                    }
                 }
                 SYM, SYM2 -> drawCentered(c, k.label, cx, cy, rowH * 0.3f, TEXT)
                 SHIFT -> iconShift(c, cx, cy, s)
